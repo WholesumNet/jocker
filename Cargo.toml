@@ -1,0 +1,15 @@
+[package]
+name = "jocker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = {version = "1.0", features = ["derive"]}
+async-std = { version = "1.12", features = ["attributes", "unstable"] }
+async-trait = "0.1"
+env_logger = "0.10.0"
+futures = "0.3.28"
+futures-util = "0.3.29"
+bollard = "0.15"
