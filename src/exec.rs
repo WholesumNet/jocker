@@ -1,3 +1,6 @@
+use std::{cmp::min};
+use indicatif::{ProgressBar, ProgressStyle};
+
 use futures_util::{
     TryStreamExt
 };
@@ -36,7 +39,28 @@ pub async fn import_docker_image<'a>(
     docker_con: &'a Docker,
     image: String
 ) -> Result<String, JError> {
-    println!("Importing `{}`", image);
+    println!("Request to import image `{image}`");
+    let image_inspect = docker_con.inspect_registry_image(&image, None)
+        .await
+        .map_err(|e| JError {
+            who: image.clone(),
+            message: e.to_string(),
+        })?;
+    println!("Image: `{image}`, digest: `{}`", 
+        image_inspect.descriptor.digest.unwrap_or_else(|| String::from(""))
+    );
+    let mut downloaded = 0u64;
+    // setup progress bar
+    let pb = ProgressBar::new(0);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
+        .map_err(|e| JError {
+            who: image.clone(),
+            message: e.to_string(),
+        })?
+        .progress_chars("#>-"));
+    pb.set_message(format!("Importing `{image}`"));
+
     let mut import_response_stream = docker_con
         .create_image(
             Some(CreateImageOptions{
@@ -46,69 +70,28 @@ pub async fn import_docker_image<'a>(
             None,
             None
         );
-    let mut digest;
-    let mut image_size = -1f64;
-    let mut image_size_read = false;
-    let (mut tp25, mut tp50, mut tp75) = (false, false, false);
     while let Some(create_image_info) = import_response_stream.try_next()
         .await
         .map_err(|e| JError {
             who: image.clone(),
             message: e.to_string(),
         })? {
-        // look up digest 
-        if let Some(status) = create_image_info.status {
-            if true == status.starts_with("Digest:") {
-                (_, digest) = status.split_at(8);
-                println!("Image `{}`, digest: `{}`", image, digest);
-            }
-        }
-        // track progress(pick only quarters: start, 25%, 50%, and 75%)
+        // track progress
+        let mut first_chunk = true; // image size is revealed within the first chunk 
         if let Some(progress_detail) = create_image_info.progress_detail {
-            let (current, total) = (
-                progress_detail.current.unwrap_or_else(|| 0i64) as f64,
-                progress_detail.total.unwrap_or_else(|| 0i64) as f64
-            );
-            if total > 0f64 {
-                let progress = current / total;
-                if false == image_size_read {
-                    image_size = total / 1_048_576f64;
-                    println!("Image `{image}`, download started, total size: `{image_size:.2} MB`");
-                    image_size_read = true;
-                }
-                if progress > 0.25 && progress < 0.5 {
-                    if tp25 == false {
-                        println!("Image `{}`, downloaded `{:.2}/{:.2} MB` ~25%",
-                            image,
-                            current / 1_048_576f64,
-                            image_size
-                        );
-                        tp25 = true;
-                    }
-                } else if progress > 0.5 && progress < 0.75 {
-                    if tp50 == false {
-                        println!("Image `{}`, downloaded `{:.2}/{:.2} MB` ~50%",
-                            image,
-                            current / 1_048_576f64,
-                            image_size
-                        );
-                        tp50 = true;
-                    }
-                } else if progress > 0.75 {
-                    if tp75 == false {
-                        println!("Image `{}`, downloaded `{:.2}/{:.2} MB` ~75%",
-                            image,
-                            current / 1_048_576f64,
-                            image_size
-                        );
-                        tp75 = true;
-                    }
-                } 
+            let current = progress_detail.current.unwrap_or_else(|| 0i64) as u64;
+            let total = progress_detail.total.unwrap_or_else(|| 0i64) as u64;
+            if first_chunk == true {
+                pb.set_length(total); 
+                first_chunk = false;
             }
-        }        
+            downloaded += current;
+            let progress = min(downloaded + current, total);
+            pb.set_position(progress);            
+        }
     }
+    pb.finish_with_message(format!("Image `{image}` is ready."));
 
-    println!("Image `{}` has been imported.", image);
     Ok(image)
 }
 
