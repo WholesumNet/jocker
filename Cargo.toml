@@ -12,4 +12,6 @@ async-trait = "0.1"
 env_logger = "0.10.0"
 futures = "0.3.28"
 futures-util = "0.3.29"
-bollard = "0.15"
+bollard = "0.17"
+indicatif = { version = "0.17.8", features = ["tokio"] }
+
