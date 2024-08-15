@@ -40,12 +40,15 @@ pub async fn import_docker_image<'a>(
     image: String
 ) -> Result<String, JError> {
     println!("Request to import image `{image}`");
-    let image_inspect = docker_con.inspect_registry_image(&image, None)
-        .await
-        .map_err(|e| JError {
-            who: image.clone(),
-            message: e.to_string(),
-        })?;
+    let image_inspect = match docker_con.inspect_registry_image(&image, None).await {
+        Err(e) => {
+            return Err(JError {
+                who: image.clone(),
+                message: e.to_string(),
+            })
+        },
+        Ok(inspect) => inspect,        
+    };
     println!("Image: `{image}`, digest: `{}`", 
         image_inspect.descriptor.digest.unwrap_or_else(|| String::from(""))
     );
@@ -103,8 +106,10 @@ pub async fn run_docker_job<'a>(
     src_volume: String,
 ) -> Result<JobExecutionResult, JError> {
     // 1- import the docker image
-    import_docker_image(docker_con, image.clone())
-        .await?;
+    if let Err(err) = import_docker_image(docker_con, image.clone()).await {
+        eprintln!("Docker image import error: `{err:?}`");
+        println!("Defaulting to local Docker pool.");
+    }
     // 2- create and start the container
     let volume = format!("{}:{}",
         src_volume,
